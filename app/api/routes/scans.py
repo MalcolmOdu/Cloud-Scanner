@@ -1,14 +1,23 @@
 ## Scan routes
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from sqlalchemy import case
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.db.models import Scan, Finding, ScanStatus
+from app.db.models import Scan, Finding, ScanStatus, Severity
 from app.scanner import run_scan
 from app.schemas import ScanCreate, ScanRead, FindingRead
 
 router = APIRouter()
+
+# Lower rank = more severe, so findings sort most severe first.
+SEVERITY_RANK = {
+    Severity.critical: 0,
+    Severity.high: 1,
+    Severity.medium: 2,
+    Severity.low: 3,
+}
 
 @router.post("/scans", response_model=ScanRead, status_code=201)
 def create_scan(payload: ScanCreate, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
@@ -29,4 +38,9 @@ def get_scan_findings(scan_id: int, db: Session = Depends(get_db)):
     scan = db.get(Scan, scan_id)
     if scan is None:
         raise HTTPException(status_code=404, detail="Scan not found")
-    return db.query(Finding).filter(Finding.scan_id == scan_id).all()
+    return (
+        db.query(Finding)
+        .filter(Finding.scan_id == scan_id)
+        .order_by(case(SEVERITY_RANK, value=Finding.severity), Finding.id)
+        .all()
+    )
